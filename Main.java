@@ -1,4 +1,5 @@
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
 
@@ -156,6 +157,9 @@ class Container {
 	private int height;
 	private int weight;
 	private int[][][] space;
+	private int cumX;
+	private int cumY;
+	private int cumZ;
 
 	/**
 	 * 创建箱子
@@ -170,6 +174,9 @@ class Container {
 		this.height = height;
 		this.space = new int[length][width][height];
 		this.weight = 0;
+		this.cumX = 0;
+		this.cumY = 0;
+		this.cumZ = 0;
 	}
 
 	public int getLength() {
@@ -248,12 +255,59 @@ class Container {
 		return (double) usedSpace / totalSpace * 100;
 	}
 
+	/**
+	 * 装入物品，更新箱子总坐标和总重量
+	 * 
+	 * @param item 要加的物品
+	 * @return true
+	 */
+	public boolean addItem(Item item) {
+		this.addWeight(item.getWeight());
+		this.cumX += item.getStartX() + item.getLength() / 2.0;
+		this.cumY += item.getStartY() + item.getWidth() / 2.0;
+		this.cumZ += item.getStartZ() + item.getHeight() / 2.0;
+		return true;
+	}
+
+	/**
+	 * 计算箱子中心
+	 * 
+	 * @return [X重心，Y重心，Z重心]
+	 */
+	public double[] getCOM() {
+		double comX = this.cumX / (double) this.weight;
+		double comY = this.cumY / (double) this.weight;
+		double comZ = this.cumZ / (double) this.weight;
+		double[] com = { comX, comY, comZ };
+		return com;
+	}
+
+}
+
+/**
+ * Plane 代表飞机
+ * 
+ * @version 1.6.28
+ * @since 1.6.28
+ */
+class Plane {
+	private int length;
+	private double weight;
+	private int centerMass;
+	private double changeCOM;
+
+	public Plane(int length, double weight, int centerMass, double changeCOM) {
+		this.length = length;
+		this.weight = weight;
+		this.centerMass = centerMass;
+		this.changeCOM = changeCOM;
+	}
 }
 
 /**
  * 主要装箱算法
  * 
- * @version 1.6.20
+ * @version 1.7.18
  * @since 1.6.20
  */
 class LoadingAlgorithm {
@@ -268,7 +322,14 @@ class LoadingAlgorithm {
 		List<Container> containers = new ArrayList<>();
 		containers.add(new Container(container.getLength(), container.getWidth(), container.getHeight()));
 
-		items.sort(new ItemSortingComparator());
+		//items.sort(new ItemSortingComparator());
+		
+		//优化1
+		sortItems(items, container.getLength(), container.getWidth(), container.getHeight());
+		
+		//优化2
+		smartRotation(items, container);
+		
 		for (Item item : items) {
 			boolean itemPlaced = false;
 
@@ -315,8 +376,7 @@ class LoadingAlgorithm {
 						item.setStartX(x);
 						item.setStartY(y);
 						item.setStartZ(z);
-						container.addWeight(item.getWeight());
-						return true;
+						return container.addItem(item);
 					} else {
 						item.rotate();
 						if (isSpaceAvailable(x, y, z, item, container)) {
@@ -324,8 +384,7 @@ class LoadingAlgorithm {
 							item.setStartX(x);
 							item.setStartY(y);
 							item.setStartZ(z);
-							container.addWeight(item.getWeight());
-							return true;
+							return container.addItem(item);
 						} else {
 							item.rotate(); // rotate back
 						}
@@ -402,6 +461,76 @@ class LoadingAlgorithm {
 					"Container " + (i + 1) + ": Weight: " + container.getWeight() + "; " + usagePercentage + "%");
 		}
 	}
+	
+	/**
+	 * 优化1：智能排序
+	 * @param items
+	 * @param containerLength
+	 * @param containerWidth
+	 * @param containerHeight
+	 */
+	public static void sortItems(List<Item> items, int containerLength, int containerWidth, int containerHeight) {
+	    Collections.sort(items, (item1, item2) -> {
+	        // Calculate fit score for each item
+	        double fitScore1 = calculateFitScore(item1, containerLength, containerWidth, containerHeight);
+	        double fitScore2 = calculateFitScore(item2, containerLength, containerWidth, containerHeight);
+
+	        // Sort based on fit score in descending order
+	        return Double.compare(fitScore2, fitScore1);
+	    });
+	}
+
+	private static double calculateFitScore(Item item, int containerLength, int containerWidth, int containerHeight) {
+	    // Calculate fit score based on item dimensions and container size
+	    double itemVolume = item.getLength() * item.getWidth() * item.getHeight();
+	    double containerVolume = containerLength * containerWidth * containerHeight;
+	    double utilizationRatio = itemVolume / containerVolume;
+	    
+	    // You can consider other factors like weight, space utilization, etc. to calculate the fit score
+
+	    return utilizationRatio;
+	}
+	
+	/**
+	 * 优化2：智能旋转
+	 * @param items
+	 * @param container
+	 */
+	public static void smartRotation(List<Item> items, Container container) {
+	    for (Item item : items) {
+	        boolean shouldRotate = shouldRotateItem(item, container);
+	        if (shouldRotate) {
+	            item.rotate();
+	        }
+	    }
+	}
+	
+	private static boolean shouldRotateItem(Item item, Container container) {
+	    int itemLength = item.getLength();
+	    int itemWidth = item.getWidth();
+	    int itemHeight = item.getHeight();
+
+	    int availableLength = container.getLength();
+	    int availableWidth = container.getWidth();
+	    int availableHeight = container.getHeight();
+
+	    // Check if the item can fit without rotation
+	    if (itemLength <= availableLength && itemWidth <= availableWidth && itemHeight <= availableHeight) {
+	        return false;
+	    }
+
+	    // Check if the item can fit after rotation
+	    if (itemWidth <= availableLength && itemLength <= availableWidth && itemHeight <= availableHeight) {
+	        return true;
+	    }
+
+	    // Check if the item can fit by rotating on another axis
+	    if (itemHeight <= availableLength && itemWidth <= availableWidth && itemLength <= availableHeight) {
+	        return true;
+	    }
+
+	    return false;
+	}
 }
 
 /**
@@ -412,29 +541,9 @@ class LoadingAlgorithm {
  */
 public class Main {
 	public static void main(String[] args) {
-		System.out.println("Test 0:");
-		test0();
-		System.out.println("Test 0 Complete \n--------------------");
-
-		System.out.println("Test 1:");
-		test1();
-		System.out.println("Test 1 Complete \n--------------------");
-
-		System.out.println("Test 2:");
-		test2();
-		System.out.println("Test 2 Complete \n--------------------");
-
-		// System.out.println("Test 3:");
-		// test3();
-		// System.out.println("Test 3 Complete \n--------------------");
-
-		System.out.println("Test 4:");
-		test4();
-		System.out.println("Test 4 Complete \n--------------------");
-
-		System.out.println("Test 5:");
-		test5();
-		System.out.println("Test 5 Complete \n--------------------");
+		System.out.println("Test 6:");
+		test6();
+		System.out.println("Test 6 Complete \n--------------------");
 	}
 
 	/**
@@ -466,7 +575,7 @@ public class Main {
 	}
 
 	/**
-	 * 测试数据2：大中小 将300件10x9x5的物品和200件5x4x3的物品和500件1x2x2的物品放入45x40x35的箱子中
+	 * 测试数据2：大中小 将300件10x9x5的物品和200件5x4x3的物品和2000件1x2x2的物品放入45x40x35的箱子中
 	 */
 	public static void test2() {
 		Container container = new Container(45, 40, 35);
@@ -478,7 +587,7 @@ public class Main {
 		for (int i = 301; i <= 500; i++) {
 			items.add(new Item(i, 5, 4, 3, 5));
 		}
-		for (int i = 501; i <= 1000; i++) {
+		for (int i = 501; i <= 2500; i++) {
 			items.add(new Item(i, 1, 2, 2, 5));
 		}
 
@@ -528,4 +637,97 @@ public class Main {
 
 		LoadingAlgorithm.loadItems(items, container);
 	}
-}
+
+	/**
+	 * 测试数据6： 实际情况自定义。 所有尺寸为厘米(cm), 重量（kg）
+	 */
+	public static void test6() {
+		// 标准10ft集装箱内部空间(cm)。 https://www.mrbox.co.uk/container-dimensions/
+		Container container = new Container(284, 239, 235);
+
+		int i = 1;
+		List<Item> items = new ArrayList<>();
+
+		// 10x飞机引擎
+		while (i <= 10) {
+			items.add(new Item(i, 280, 230, 110, 1000));
+			i++;
+		}
+
+		// 20x卫星
+		while (i <= 30) {
+			items.add(new Item(i, 80, 50, 100, 300));
+			i++;
+		}
+
+		// 20x帐篷
+		while (i <= 50) {
+			items.add(new Item(i, 140, 235, 230, 50));
+			i++;
+		}
+
+		// 50x大型收音机
+		while (i <= 100) {
+			items.add(new Item(i, 48, 25, 10, 15));
+			i++;
+		}
+
+		// 100x燃油桶
+		while (i <= 200) {
+			items.add(new Item(i, 30, 30, 45, 10));
+			i++;
+		}
+
+		// 30x应急资源包
+		while (i <= 230) {
+			items.add(new Item(i, 75, 65, 40, 500));
+			i++;
+		}
+
+		// 50x背包
+		while (i <= 280) {
+			items.add(new Item(i, 70, 45, 30, 20));
+			i++;
+		}
+
+		// 50x头盔
+		while (i <= 330) {
+			items.add(new Item(i, 30, 30, 20, 2));
+			i++;
+		}
+
+		// 150x防弹片
+		while (i <= 480) {
+			items.add(new Item(i, 28, 22, 2, 3));
+			i++;
+		}
+
+		// 100x子弹箱:
+		// https://www.armyandoutdoors.com/blogs/news/an-introduction-to-ammo-cans
+		while (i <= 580) {
+			items.add(new Item(i, 45, 25, 15, 6));
+			i++;
+		}
+
+		// 25x步枪箱:
+		while (i <= 605) {
+			items.add(new Item(i, 120, 20, 10, 15));
+			i++;
+		}
+
+		// 150x小袋(食品等）
+		while (i <= 755) {
+			items.add(new Item(i, 20, 13, 10, 1));
+			i++;
+		}
+
+		// 245x零碎
+		while (i <= 1000) {
+			items.add(new Item(i, 12, 8, 5, 1));
+			i++;
+		}
+
+		LoadingAlgorithm.loadItems(items, container);
+
+	}
+} // end
