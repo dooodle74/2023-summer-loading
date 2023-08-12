@@ -2,7 +2,13 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Scanner;
 
+import org.apache.poi.ss.usermodel.*;
+import org.apache.poi.xssf.usermodel.XSSFWorkbook;
+
+import java.io.FileInputStream;
+import java.io.InputStream;
 /**
  * Item 代表单个物品
  * 
@@ -16,7 +22,7 @@ class Item {
 	private int length;
 	private int width;
 	private int height;
-	private int weight;
+	private double weight;
 
 	// 物品在箱中的位置： 坐标xyz
 	private int startX;
@@ -25,6 +31,9 @@ class Item {
 
 	// 物品是否经过90度旋转
 	private boolean isRotated;
+
+	// 物品最终放置的箱子
+	private int containerNumber;
 
 	/**
 	 * 创建物品
@@ -35,7 +44,7 @@ class Item {
 	 * @param height 高度
 	 * @param weight 重量
 	 */
-	public Item(int number, int length, int width, int height, int weight) {
+	public Item(int number, int length, int width, int height, double weight) {
 		this.number = number;
 		this.length = length;
 		this.width = width;
@@ -63,7 +72,7 @@ class Item {
 		return height;
 	}
 
-	public int getWeight() {
+	public double getWeight() {
 		return weight;
 	}
 
@@ -93,6 +102,14 @@ class Item {
 
 	public void setStartZ(int startZ) {
 		this.startZ = startZ;
+	}
+
+	public int getContainer() {
+		return containerNumber;
+	}
+
+	public void setContainer(int containerNum) {
+		this.containerNumber = containerNum;
 	}
 
 	public void rotate() {
@@ -141,7 +158,7 @@ class ItemSortingComparator implements Comparator<Item> {
 		}
 
 		// Sort by weight in descending order
-		return Integer.compare(item2.getWeight(), item1.getWeight());
+		return Double.compare(item2.getWeight(), item1.getWeight());
 	}
 }
 
@@ -155,11 +172,12 @@ class Container {
 	private int length;
 	private int width;
 	private int height;
-	private int weight;
+	private double weight;
 	private int[][][] space;
 	private int cumX;
 	private int cumY;
 	private int cumZ;
+	private int numItems;
 
 	/**
 	 * 创建箱子
@@ -177,6 +195,23 @@ class Container {
 		this.cumX = 0;
 		this.cumY = 0;
 		this.cumZ = 0;
+		this.numItems = 0;
+	}
+	
+	public Container() {
+		this.numItems = 0;
+	}
+	
+	public void postInitialize(int length, int width, int height) {
+		this.length = length;
+		this.width = width;
+		this.height = height;
+		this.space = new int[length][width][height];
+		this.weight = 0;
+		this.cumX = 0;
+		this.cumY = 0;
+		this.cumZ = 0;
+		this.numItems = 0;
 	}
 
 	public int getLength() {
@@ -191,10 +226,15 @@ class Container {
 		return height;
 	}
 
-	public int getWeight() {
+	public double getWeight() {
 		return weight;
 	}
 
+	public int getItemCount() {
+		return numItems;
+	}
+	
+	
 	/**
 	 * 在具体的位置是否有空位
 	 * 
@@ -231,8 +271,8 @@ class Container {
 	 * 
 	 * @param value 加重值
 	 */
-	public void addWeight(int value) {
-		weight += value;
+	public void addWeight(double value) {
+		this.weight += value;
 	}
 
 	/**
@@ -263,9 +303,10 @@ class Container {
 	 */
 	public boolean addItem(Item item) {
 		this.addWeight(item.getWeight());
-		this.cumX += item.getStartX() + item.getLength() / 2.0;
-		this.cumY += item.getStartY() + item.getWidth() / 2.0;
-		this.cumZ += item.getStartZ() + item.getHeight() / 2.0;
+		this.cumX += (item.getStartX() + item.getLength() / 2.0) * item.getWeight();
+		this.cumY += (item.getStartY() + item.getWidth() / 2.0) * item.getWeight();
+		this.cumZ += (item.getStartZ() + item.getHeight() / 2.0) * item.getWeight();
+		this.numItems++;
 		return true;
 	}
 
@@ -275,9 +316,9 @@ class Container {
 	 * @return [X重心，Y重心，Z重心]
 	 */
 	public double[] getCOM() {
-		double comX = this.cumX / (double) this.weight;
-		double comY = this.cumY / (double) this.weight;
-		double comZ = this.cumZ / (double) this.weight;
+		double comX = this.cumX / this.weight;
+		double comY = this.cumY / this.weight;
+		double comZ = this.cumZ / this.weight;
 		double[] com = { comX, comY, comZ };
 		return com;
 	}
@@ -285,32 +326,15 @@ class Container {
 }
 
 /**
- * Plane 代表飞机
- * 
- * @version 1.6.28
- * @since 1.6.28
- */
-class Plane {
-	private int length;
-	private double weight;
-	private int centerMass;
-	private double changeCOM;
-
-	public Plane(int length, double weight, int centerMass, double changeCOM) {
-		this.length = length;
-		this.weight = weight;
-		this.centerMass = centerMass;
-		this.changeCOM = changeCOM;
-	}
-}
-
-/**
  * 主要装箱算法
  * 
- * @version 1.7.18
+ * @version 1.7.19
  * @since 1.6.20
  */
 class LoadingAlgorithm {
+
+	private static int totalCount;
+	private static int currentCount;
 
 	/**
 	 * 主要算法，将所有物品装箱并打出所在位置和旋转情况
@@ -319,25 +343,33 @@ class LoadingAlgorithm {
 	 * @param container 第0箱子，有以后箱子的属性
 	 */
 	public static void loadItems(List<Item> items, Container container) {
+		System.out.println("Calculating...");
+		
 		List<Container> containers = new ArrayList<>();
 		containers.add(new Container(container.getLength(), container.getWidth(), container.getHeight()));
 
-		//items.sort(new ItemSortingComparator());
-		
-		//优化1
+		// items.sort(new ItemSortingComparator());
+
+		// 优化1
 		sortItems(items, container.getLength(), container.getWidth(), container.getHeight());
-		
-		//优化2
+
+		// 优化2
 		smartRotation(items, container);
-		
+
+		// percentage calculator
+		totalCount = items.size();
+		currentCount = 1;
+
 		for (Item item : items) {
 			boolean itemPlaced = false;
 
 			for (int i = 0; i < containers.size(); i++) {
 				Container currentContainer = containers.get(i);
 				if (placeItemInContainer(item, currentContainer)) {
-					System.out.println("#" + item.getNumber() + " in " + (i + 1) + " @(" + item.getStartX() + ", "
-							+ item.getStartY() + ", " + item.getStartZ() + ") Rotated: " + item.getRotation());
+					item.setContainer(i);
+					// printItem(item);
+					printPercentage();
+					currentCount++;
 					itemPlaced = true;
 					break;
 				}
@@ -347,13 +379,24 @@ class LoadingAlgorithm {
 				Container newContainer = new Container(container.getLength(), container.getWidth(),
 						container.getHeight());
 				containers.add(newContainer);
-				System.out.println("#" + item.getNumber() + " in new " + containers.size() + " @(" + item.getStartX()
-						+ ", " + item.getStartY() + ", " + item.getStartZ() + ") Rotated: " + item.getRotation());
+				item.setContainer(containers.size());
+				// printItem(item);
+				printPercentage();
+				currentCount++;
 				placeItemInContainer(item, newContainer);
 			}
 		}
-		System.out.println("\nItems Done\n");
+		System.out.println("\n\nLoading Instructions: ");
+
+		sortItemsForPackingInstruction(items);
+
+		for (Item item : items) {
+			printFinalOrder(item);
+		}
+		
+		System.out.println("\nAll Containers: \n");
 		printContainerUsagePercentages(containers);
+		System.out.println();
 	}
 
 	/**
@@ -457,277 +500,208 @@ class LoadingAlgorithm {
 		for (int i = 0; i < containers.size(); i++) {
 			Container container = containers.get(i);
 			double usagePercentage = container.calculateUsagePercentage();
+			double COM[] = container.getCOM();
+			int comX = (int) COM[0];
+			int comY = (int) COM[1];
+			int comZ = (int) COM[2];
+			
 			System.out.println(
-					"Container " + (i + 1) + ": Weight: " + container.getWeight() + "; " + usagePercentage + "%");
+					"[" + (i + 1) + "] Items: " + container.getItemCount() + "; Weight: " + container.getWeight() + "; Centre: (" + comX + ", " + comY + ", " + comZ + ")" );
 		}
 	}
-	
+
 	/**
 	 * 优化1：智能排序
+	 * 
 	 * @param items
 	 * @param containerLength
 	 * @param containerWidth
 	 * @param containerHeight
 	 */
 	public static void sortItems(List<Item> items, int containerLength, int containerWidth, int containerHeight) {
-	    Collections.sort(items, (item1, item2) -> {
-	        // Calculate fit score for each item
-	        double fitScore1 = calculateFitScore(item1, containerLength, containerWidth, containerHeight);
-	        double fitScore2 = calculateFitScore(item2, containerLength, containerWidth, containerHeight);
+		Collections.sort(items, (item1, item2) -> {
+			// Calculate fit score for each item
+			double fitScore1 = calculateFitScore(item1, containerLength, containerWidth, containerHeight);
+			double fitScore2 = calculateFitScore(item2, containerLength, containerWidth, containerHeight);
 
-	        // Sort based on fit score in descending order
-	        return Double.compare(fitScore2, fitScore1);
-	    });
+			// Sort based on fit score in descending order
+			return Double.compare(fitScore2, fitScore1);
+		});
 	}
 
 	private static double calculateFitScore(Item item, int containerLength, int containerWidth, int containerHeight) {
-	    // Calculate fit score based on item dimensions and container size
-	    double itemVolume = item.getLength() * item.getWidth() * item.getHeight();
-	    double containerVolume = containerLength * containerWidth * containerHeight;
-	    double utilizationRatio = itemVolume / containerVolume;
-	    
-	    // You can consider other factors like weight, space utilization, etc. to calculate the fit score
+		// Calculate fit score based on item dimensions and container size
+		double itemVolume = item.getLength() * item.getWidth() * item.getHeight();
+		double containerVolume = containerLength * containerWidth * containerHeight;
+		double utilizationRatio = itemVolume / containerVolume;
 
-	    return utilizationRatio;
+		// You can consider other factors like weight, space utilization, etc. to
+		// calculate the fit score
+
+		return utilizationRatio;
 	}
-	
+
 	/**
 	 * 优化2：智能旋转
+	 * 
 	 * @param items
 	 * @param container
 	 */
 	public static void smartRotation(List<Item> items, Container container) {
-	    for (Item item : items) {
-	        boolean shouldRotate = shouldRotateItem(item, container);
-	        if (shouldRotate) {
-	            item.rotate();
-	        }
-	    }
+		for (Item item : items) {
+			boolean shouldRotate = shouldRotateItem(item, container);
+			if (shouldRotate) {
+				item.rotate();
+			}
+		}
 	}
-	
+
 	private static boolean shouldRotateItem(Item item, Container container) {
-	    int itemLength = item.getLength();
-	    int itemWidth = item.getWidth();
-	    int itemHeight = item.getHeight();
+		int itemLength = item.getLength();
+		int itemWidth = item.getWidth();
+		int itemHeight = item.getHeight();
 
-	    int availableLength = container.getLength();
-	    int availableWidth = container.getWidth();
-	    int availableHeight = container.getHeight();
+		int availableLength = container.getLength();
+		int availableWidth = container.getWidth();
+		int availableHeight = container.getHeight();
 
-	    // Check if the item can fit without rotation
-	    if (itemLength <= availableLength && itemWidth <= availableWidth && itemHeight <= availableHeight) {
-	        return false;
-	    }
+		// Check if the item can fit without rotation
+		if (itemLength <= availableLength && itemWidth <= availableWidth && itemHeight <= availableHeight) {
+			return false;
+		}
 
-	    // Check if the item can fit after rotation
-	    if (itemWidth <= availableLength && itemLength <= availableWidth && itemHeight <= availableHeight) {
-	        return true;
-	    }
+		// Check if the item can fit after rotation
+		if (itemWidth <= availableLength && itemLength <= availableWidth && itemHeight <= availableHeight) {
+			return true;
+		}
 
-	    // Check if the item can fit by rotating on another axis
-	    if (itemHeight <= availableLength && itemWidth <= availableWidth && itemLength <= availableHeight) {
-	        return true;
-	    }
+		// Check if the item can fit by rotating on another axis
+		if (itemHeight <= availableLength && itemWidth <= availableWidth && itemLength <= availableHeight) {
+			return true;
+		}
 
-	    return false;
+		return false;
 	}
+
+	public static void printItem(Item item) {
+		int percent = 100 * currentCount / totalCount;
+
+		System.out.println("#" + item.getNumber() + " @ [" + (item.getContainer() + 1) + "] (" + item.getStartX() + ", "
+				+ item.getStartY() + ", " + item.getStartZ() + ") "
+				+ (item.getRotation() ? "(YES rotate)" : "(NO rotate)") + "..." + percent + "%...");
+	}
+
+	public static void printPercentage() {
+		int percent = 100 * currentCount / (totalCount + 1);
+		System.out.print("\r" + percent + "%...");
+	}
+
+	public static void printFinalOrder(Item item) {
+		System.out.println("#" + item.getNumber() + " @ [" + (item.getContainer() + 1) + "] (" + item.getStartX() + ", "
+				+ item.getStartY() + ", " + item.getStartZ() + ") "
+				+ (item.getRotation() ? "(YES rotate)" : "(NO rotate)"));
+	}
+
+	public static void sortItemsForPackingInstruction(List<Item> items) {
+		// Sort items based on their final position in the container (width-side first)
+		Collections.sort(items, (item1, item2) -> {
+			int compareContainer = Integer.compare(item1.getContainer(), item2.getContainer());
+			int compareX = Integer.compare(item1.getStartX(), item2.getStartX());
+			int compareY = Integer.compare(item1.getStartY(), item2.getStartY());
+			int compareZ = Integer.compare(item1.getStartZ(), item2.getStartZ());
+
+			// 0: sort by container
+			if (compareContainer != 0) {
+				return compareContainer;
+			}
+
+			// First, sort items based on their x-coordinate (width-side)
+			if (compareX != 0) {
+				return compareX;
+			}
+
+			// If x-coordinates are the same, sort based on their y-coordinate
+			if (compareY != 0) {
+				return compareY;
+			}
+
+			// If x and y-coordinates are the same, sort based on their z-coordinate
+			return compareZ;
+		});
+	}
+
 }
 
 /**
  * Main运行程序。所有数据再此输入。
  * 
- * @version 1.6.20
+ * @version 1.7.19
  * @since 1.6.20
  */
 public class Main {
-	public static void main(String[] args) {
-		System.out.println("Test 6:");
-		test6();
-		System.out.println("Test 6 Complete \n--------------------");
+	public static void main(String[] args) {		
+		Scanner s = new Scanner(System.in);
+		System.out.println("Enter Filepath (C:/***/***.xlsx): ");
+		String filepath = s.nextLine();
+		try {
+            // Load Excel file
+            InputStream inputStream = new FileInputStream(filepath);
+            Workbook workbook = new XSSFWorkbook(inputStream);
+
+            Sheet sheet = workbook.getSheetAt(0);
+
+            int rowNum = 1;
+            int cellNum = 0;
+            int cellA = 0;
+            int cellB = 0;
+            int cellC = 0;
+            double cellD = 0;
+            Container container = new Container();
+            List<Item> items = new ArrayList<>();
+            
+            for (Row row : sheet) {
+            	cellNum = 0;
+            	for (Cell cell : row) {
+            		switch(cellNum) {
+            		case 0:
+            			cellA = (int) cell.getNumericCellValue();
+            			cellNum++;
+            			break;
+            		case 1:
+            			cellB = (int) cell.getNumericCellValue();
+            			cellNum++;
+            			break;
+            		case 2:
+            			cellC = (int) cell.getNumericCellValue();
+            			cellNum++;
+            			break;
+            		case 3:
+            			cellD = cell.getNumericCellValue();
+            			cellNum++;
+            			break;
+            		default:
+            			
+            		}
+            	}
+            	
+            	if (rowNum == 1) {
+            		container.postInitialize(cellA, cellB, cellC);
+            	} else {
+            		items.add(new Item(rowNum, cellA, cellB, cellC, cellD));
+            	}
+            	
+            	rowNum++;
+            	
+            }
+            
+            // Close the workbook and input stream
+            workbook.close();
+            inputStream.close();
+            System.out.println("\nData input SUCCESS");
+            LoadingAlgorithm.loadItems(items, container);
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
 	}
 
-	/**
-	 * 测试数据0： 测试格式 将2件10x10x10的物品放进20x20x20的箱子中
-	 */
-	public static void test0() {
-		Container container = new Container(20, 20, 20);
-
-		List<Item> items = new ArrayList<>();
-		for (int i = 1; i <= 2; i++) {
-			items.add(new Item(i, 10, 10, 10, 5));
-		}
-
-		LoadingAlgorithm.loadItems(items, container);
-	}
-
-	/**
-	 * 测试数据1： 完美空间利用 将270件10x10x10的物品放进30x30x30的箱子中
-	 */
-	public static void test1() {
-		Container container = new Container(30, 30, 30);
-
-		List<Item> items = new ArrayList<>();
-		for (int i = 1; i <= 270; i++) {
-			items.add(new Item(i, 10, 10, 10, 5));
-		}
-
-		LoadingAlgorithm.loadItems(items, container);
-	}
-
-	/**
-	 * 测试数据2：大中小 将300件10x9x5的物品和200件5x4x3的物品和2000件1x2x2的物品放入45x40x35的箱子中
-	 */
-	public static void test2() {
-		Container container = new Container(45, 40, 35);
-
-		List<Item> items = new ArrayList<>();
-		for (int i = 1; i <= 300; i++) {
-			items.add(new Item(i, 10, 9, 5, 5));
-		}
-		for (int i = 301; i <= 500; i++) {
-			items.add(new Item(i, 5, 4, 3, 5));
-		}
-		for (int i = 501; i <= 2500; i++) {
-			items.add(new Item(i, 1, 2, 2, 5));
-		}
-
-		LoadingAlgorithm.loadItems(items, container);
-	}
-
-	/**
-	 * 测试数据3：小性随机 将10000件三方尺寸随机5-10不等的物品放入100x100x75的箱子中
-	 */
-	/*
-	 * public static void test3() { Container container = new Container(100, 100,
-	 * 75);
-	 * 
-	 * List<Item> items = new ArrayList<>(); for (int i=1; i<=10000; i++) {
-	 * items.add(new Item(i, (int)(Math.random()*5+5), (int)(Math.random()*5+5),
-	 * (int)(Math.random()*5+5), 10)); }
-	 * 
-	 * LoadingAlgorithm.loadItems(items, container); }
-	 */
-
-	/**
-	 * 测试数据4：中性随机 将1000件三方尺寸随机5-30不等的物品放入100x100x55的箱子中
-	 */
-	public static void test4() {
-		Container container = new Container(100, 100, 55);
-
-		List<Item> items = new ArrayList<>();
-		for (int i = 1; i <= 1000; i++) {
-			items.add(new Item(i, (int) (Math.random() * 25 + 5), (int) (Math.random() * 25 + 5),
-					(int) (Math.random() * 25 + 5), 10));
-		}
-
-		LoadingAlgorithm.loadItems(items, container);
-	}
-
-	/**
-	 * 测试数据5：大型随机 将250件三方尺寸随机40-55不等的物品放入100x100x75的箱子中
-	 */
-	public static void test5() {
-		Container container = new Container(100, 100, 55);
-
-		List<Item> items = new ArrayList<>();
-		for (int i = 1; i <= 250; i++) {
-			items.add(new Item(i, (int) (Math.random() * 15 + 40), (int) (Math.random() * 15 + 40),
-					(int) (Math.random() * 15 + 40), 10));
-		}
-
-		LoadingAlgorithm.loadItems(items, container);
-	}
-
-	/**
-	 * 测试数据6： 实际情况自定义。 所有尺寸为厘米(cm), 重量（kg）
-	 */
-	public static void test6() {
-		// 标准10ft集装箱内部空间(cm)。 https://www.mrbox.co.uk/container-dimensions/
-		Container container = new Container(284, 239, 235);
-
-		int i = 1;
-		List<Item> items = new ArrayList<>();
-
-		// 10x飞机引擎
-		while (i <= 10) {
-			items.add(new Item(i, 280, 230, 110, 1000));
-			i++;
-		}
-
-		// 20x卫星
-		while (i <= 30) {
-			items.add(new Item(i, 80, 50, 100, 300));
-			i++;
-		}
-
-		// 20x帐篷
-		while (i <= 50) {
-			items.add(new Item(i, 140, 235, 230, 50));
-			i++;
-		}
-
-		// 50x大型收音机
-		while (i <= 100) {
-			items.add(new Item(i, 48, 25, 10, 15));
-			i++;
-		}
-
-		// 100x燃油桶
-		while (i <= 200) {
-			items.add(new Item(i, 30, 30, 45, 10));
-			i++;
-		}
-
-		// 30x应急资源包
-		while (i <= 230) {
-			items.add(new Item(i, 75, 65, 40, 500));
-			i++;
-		}
-
-		// 50x背包
-		while (i <= 280) {
-			items.add(new Item(i, 70, 45, 30, 20));
-			i++;
-		}
-
-		// 50x头盔
-		while (i <= 330) {
-			items.add(new Item(i, 30, 30, 20, 2));
-			i++;
-		}
-
-		// 150x防弹片
-		while (i <= 480) {
-			items.add(new Item(i, 28, 22, 2, 3));
-			i++;
-		}
-
-		// 100x子弹箱:
-		// https://www.armyandoutdoors.com/blogs/news/an-introduction-to-ammo-cans
-		while (i <= 580) {
-			items.add(new Item(i, 45, 25, 15, 6));
-			i++;
-		}
-
-		// 25x步枪箱:
-		while (i <= 605) {
-			items.add(new Item(i, 120, 20, 10, 15));
-			i++;
-		}
-
-		// 150x小袋(食品等）
-		while (i <= 755) {
-			items.add(new Item(i, 20, 13, 10, 1));
-			i++;
-		}
-
-		// 245x零碎
-		while (i <= 1000) {
-			items.add(new Item(i, 12, 8, 5, 1));
-			i++;
-		}
-
-		LoadingAlgorithm.loadItems(items, container);
-
-	}
 } // end
